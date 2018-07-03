@@ -1,3 +1,4 @@
+#!/usr/bin/python
 """
 esxi-wmWare-Backup-Creator
 
@@ -6,12 +7,24 @@ esxi-wmWare-Backup-Creator
 """
 
 import re
+import os
+import argparse
 
 from VM import VM
 from OnlineVM import OnlineVM
 
 """
-Parst die Informationen aus der Datei "runningVMsList.txt". 
+Führt Shell-Befehle auf dem ESXI-Host aus und stellt damit die zu parsenden Dateien zur Verfügung.
+"""
+def createDatasourceFiles():
+
+    os.system("rm /backupScript/esxi-backup-creator/datasource/runningVMsList.txt")
+    os.system("rm /backupScript/esxi-backup-creator/datasource/allVMsList.txt")
+    os.system("esxcli vm process list >> /backupScript/esxi-backup-creator/datasource/runningVMsList.txt")
+    os.system("vim-cmd vmsvc/getallvms >> /backupScript/esxi-backup-creator/datasource/allVMsList.txt")
+
+"""
+Parst die Informationen aus der Datei "runningVMsList.txt".
 
 
 """
@@ -83,6 +96,11 @@ def printVMs(VMs):
         print(str(cnt) + " : " + vm.name)
         cnt += 1
 
+def printBackups(Backups):
+    cnt = 1
+    for backup in Backups:
+        print(str(cnt) + " : " + backup)
+        cnt += 1
 
 def waitForUserInputToGetVMSelection(VMs):
     print("Enter id to Backup:")
@@ -99,45 +117,118 @@ def waitForUserInputToGetVMSelection(VMs):
         print("Enter a valid id from list.")
         waitForUserInputToGetVMSelection(VMs)
 
-def isSelectedVMRunning(selectedVm, onlineVMWs):
+def waitForUserInputToGetBackupSelection(allBackups):
+    print("Enter id to recover:")
+    try:
+        selectedBackup = int(input())
+        if not 0 < selectedBackup <= len(allBackups):
+            waitForUserInputToGetBackupSelection(allBackups)
+
+        else:
+            print("Backup \"" + allBackups[selectedBackup - 1] + "\" selected.")
+            for backup in allBackups:
+                if backup == allBackups[selectedBackup - 1]:
+                    return backup
+    except Exception as e:
+        print("Enter a valid id from list." + e)
+        waitForUserInputToGetVMSelection(allBackups)
+
+def isSelectedVMRunning(selectedVM, onlineVMWs):
     isVMRunning = False
 
     for onlineVm in onlineVMWs:
         #Wenn die ausgewaehlte VM online ist, erhaelt sie die Infos des laufenden Prozesses.
-        if selectedVm.name == onlineVm.name:
-            selectedVm.configFile = onlineVm.configFile
-            selectedVm.displayName = onlineVm.displayName
-            selectedVm.processId = onlineVm.processId
-            selectedVm.uuId = onlineVm.uuId
-            selectedVm.vmxCartelId = onlineVm.vmxCartelId
-            selectedVm.worldId = onlineVm.worldId
+        if selectedVM.name == onlineVm.name:
+            selectedVM.configFile = onlineVm.configFile
+            selectedVM.displayName = onlineVm.displayName
+            selectedVM.processId = onlineVm.processId
+            selectedVM.uuId = onlineVm.uuId
+            selectedVM.vmxCartelId = onlineVm.vmxCartelId
+            selectedVM.worldId = onlineVm.worldId
             isVMRunning = True
 
     return isVMRunning
 
+"""
+Fährt die VM herunter
+"""
+def shutDownVM(shutDownType, selectedVM):
+    shutDownCommand = "esxcli vm process kill --type=" + shutDownType + " --world-id=" + selectedVM.worldId
+    #print(shutDownCommand)
+    os.system(shutDownCommand)
 
-if __name__ == '__main__':
+def startVM(selectedVM):
+    startCommand = "vim-cmd vmsvc/power.on " + selectedVM.vmId
+    os.system(startCommand)
 
-    onlineVMWs = getOnlineVMs("runningVMsList.txt")
-    # ToDo: Implementiere Erstellung der runningVMsLis.txt auf esxi-Host
-    # Datei wird durch den folgenden Befehl auf dem esxi-Host erzeugt:
-    # $ esxcli vm process list >> runningVMsList.txt
 
-    allVMs = getAllVMs("allVMsList.txt")
-    # ToDo: Implementiere Erstellung der allVMsLis.txt auf esxi-Host
-    # Datei wird durch den folgenden Befehl auf dem esxi-Host erzeugt:
-    # $
+def waitForUserInputShutdownConfirmation(selectedVM):
+    isShutDownConfirmed = False;
+    confirmation = input("Shutdown VM " + selectedVM.name + "?\ny/n:")
+    if not re.match("^y(es)?$", confirmation):
+        print("Shutdown not confirmed")
+    else:
+        print("Shutdown confirmed !")
+        isShutDownConfirmed = True
+    return isShutDownConfirmed
+
+def backupVM(selectedVM):
+    #[dataStore]
+    dataStorePath = "/vmfs/volumes/5956536d-2a91849e-201b-1866da9841d4/" + selectedVM.name
+    #QNAP-1
+    backupStorePath = "/vmfs/volumes/5b2b744f-83de16a0-fe3b-1866da9841d4/Backup_VMs/" + selectedVM.name
+    os.system("cp -r " + dataStorePath + " " + backupStorePath)
+
+def getListOfBackups():
+    return os.listdir('/vmfs/volumes/5b2b744f-83de16a0-fe3b-1866da9841d4/Backup_VMs/')
+
+
+def recoverVM():
+    #ToDo: Implement recoverVM()
+    pass
+
+def startBackupProcess():
+    createDatasourceFiles()
+    onlineVMWs = getOnlineVMs("/backupScript/esxi-backup-creator/datasource/runningVMsList.txt")
+    allVMs = getAllVMs("/backupScript/esxi-backup-creator/datasource/allVMsList.txt")
 
     printVMs(allVMs)
-    selectedVm = waitForUserInputToGetVMSelection(allVMs)
+    selectedVM = waitForUserInputToGetVMSelection(allVMs)
 
-    isVmRunning = isSelectedVMRunning(selectedVm, onlineVMWs)
+    isVmRunning = isSelectedVMRunning(selectedVM, onlineVMWs)
     if isVmRunning:
-        print("VM currently UP! WorldId: " + selectedVm.worldId)
-        # ToDo: stopVM()
-    else:
-        print("VM not running")
+        print("VM currently UP! WorldId: " + selectedVM.worldId)
+        isShutDownConfirmed = waitForUserInputShutdownConfirmation(selectedVM)
+        if isShutDownConfirmed:
+            shutDownVM("soft", selectedVM)
+
+    backupVM(selectedVM)
+    startVM(selectedVM)
+
+def startRecoveryProcess():
+    # ToDo: Recovery
+    allBackups = getListOfBackups()
+    printBackups(allBackups)
+    selectedBackup = waitForUserInputToGetBackupSelection(allBackups)
+    print(selectedBackup)
 
 
-    #ToDo:  stopVM() registerVM() startVM()
+    # ToDo:  stopVM() registerVM() startVM()
+    print("ToDo: stopVM(), copyVMToEsxi(), registerVM(), startVM()")
+    pass
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-b','--backup', action='store_true', help='Backup VM from ESXI to Backupstore')
+    parser.add_argument('-r','--recover', action='store_true', help='Recover VM from Backupstore to ESXI')
+    args = parser.parse_args()
+
+    if args.backup == False and args.recover == False:
+        print("Please use -h")
+
+    if args.backup:
+        startBackupProcess()
+    elif args.recover:
+        startRecoveryProcess()
+
     print("Parsing Done")
